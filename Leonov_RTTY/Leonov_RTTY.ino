@@ -1,10 +1,10 @@
 /*
 
    Leonov 1 stratospheric capsule.
-   
+
    RTTY code thanks to Charles Webb KC1ENN@arrl.net
    and Ted Van Slyck www.openrcdesign.com
-   
+
    "Feel free to use for personal non commercial use.
    Use at your own risk, no warranties.
    It probably has errors of some kind."
@@ -12,6 +12,21 @@
 */
 
 #include <SPI.h>
+#include <Adafruit_GPS.h>
+#include <Wire.h>
+#include <Adafruit_BMP085.h>
+
+HardwareSerial Serial1(2);
+
+// what's the name of the hardware serial port?
+#define GPSSerial Serial1
+
+// Connect to the GPS on the hardware port
+Adafruit_GPS GPS(&GPSSerial);
+
+// Set GPSECHO to 'false' to turn off echoing the GPS data to the Serial console
+// Set to 'true' if you want to debug and listen to the raw GPS sentences
+#define GPSECHO false
 
 #define MODULATION 0x60
 //#define radioPower 0x50 // -2 dBm
@@ -24,12 +39,12 @@
 #define ssPin 33  //  SS
 #define rstPin 27 //  reset pin
 #define myShift 3 // 3 x 61 Hz = 181 Hz ~ 170 Hz
-#define myDelay 1 // delay in seconds between loops
+#define myDelay 5 // delay in seconds between loops
 #define myFrequency 433425000  //  70cm
 //#define myFrequency 915000000  //  33cm
 
 char mytext[80];
-String myCallSign = "LEONOV1/B";
+String myCallSign = "$LEONOV";
 String myString = "";
 int myStringLen = 0;
 int current_state;
@@ -40,15 +55,22 @@ float bit_time = 1000 / baud;;
 float stop_bit_time = bit_time * 2;
 uint32_t myMark;
 uint32_t mySpace;
-unsigned int count = 0;
+unsigned int tx_count = 0;
 char mycount = 0;
 int myHour, myMinute, mySecond, myAlt, mySpd, mySat;
 double myLat, myLng;
 // For stats that happen every 5 seconds
 unsigned long last = 0UL;
 
+Adafruit_BMP085 bmp;
+
+uint32_t timer = millis();
+
 void setup() {
+  // Serial setup
   Serial.begin(115200);
+
+  // Radio setup
   pinMode(ssPin, OUTPUT);
   pinMode(rstPin, OUTPUT);
   setupSPI();
@@ -56,14 +78,57 @@ void setup() {
   resetRFM69();  // a good thing to use and necessary if using boards with level shifters
   delay(1000);
   setupRFM69();
+
+  // GPS setup
+  // 9600 NMEA is the default baud rate for Adafruit MTK GPS's- some use 4800
+  GPS.begin(9600);
+  GPS.sendCommand(PMTK_SET_NMEA_OUTPUT_RMCGGA);
+  GPS.sendCommand(PMTK_SET_NMEA_UPDATE_1HZ); // 1 Hz update rate
+  GPS.sendCommand(PGCMD_ANTENNA);
+
+  // BMP180 setup
+  bmp.begin();
 }
 
 void loop () {
-  count++;
-  buildString();
-  transmitData();
-  delay (myDelay * 1000);  //  delay between transmit cycle
-} //ends void loop
+  char c = GPS.read();
+  if (GPS.newNMEAreceived()) {
+    if (!GPS.parse(GPS.lastNMEA()))
+      return;
+  }
+
+  if (timer > millis()) timer = millis();
+
+  // approximately every 2 seconds or so, print out the current stats
+  if (millis() - timer > 13000) {
+    tx_count++;
+    timer = millis(); // reset the timer
+    Serial.print("\nTime: ");
+    Serial.print(GPS.hour, DEC); Serial.print(':');
+    Serial.print(GPS.minute, DEC); Serial.print(':');
+    Serial.print(GPS.seconds, DEC); Serial.print('.');
+    Serial.println(GPS.milliseconds);
+    Serial.print("Date: ");
+    Serial.print(GPS.day, DEC); Serial.print('/');
+    Serial.print(GPS.month, DEC); Serial.print("/20");
+    Serial.println(GPS.year, DEC);
+    Serial.print("Fix: "); Serial.print((int)GPS.fix);
+    Serial.print(" quality: "); Serial.println((int)GPS.fixquality);
+    if (GPS.fix) {
+      Serial.print("Location: ");
+      Serial.print(GPS.latitude, 4); Serial.print(GPS.lat);
+      Serial.print(", ");
+      Serial.print(GPS.longitude, 4); Serial.println(GPS.lon);
+      Serial.print("Speed (knots): "); Serial.println(GPS.speed);
+      Serial.print("Angle: "); Serial.println(GPS.angle);
+      Serial.print("Altitude: "); Serial.println(GPS.altitude);
+      Serial.print("Satellites: "); Serial.println((int)GPS.satellites);
+    }
+
+    buildString();
+    transmitData();
+  }
+}
 
 void txString(String dataString) {
   Serial.println(dataString);  // print to Serial Monitor
@@ -73,10 +138,17 @@ void txString(String dataString) {
 }
 
 void buildString() {
-  myString = myCallSign;
+  myString = myCallSign + ",";
+  myString += String(tx_count) + ",";
+  myString += String(GPS.lat) + ",";
+  myString += String(GPS.lon) + ",";
+  myString += String(GPS.altitude) + ",";
+  myString += String(bmp.readAltitude()) + ",";
+  myString += String(bmp.readPressure()) + ",";
+  myString += String(bmp.readTemperature()) + "*";
   myString.toUpperCase();
   myStringLen = myString.length();
-  Serial.print("I am sending: "); Serial.println(myString);
+  Serial.print("TX: "); Serial.println(myString);
 }
 
 void setupRFM69() {
@@ -214,7 +286,7 @@ void lookup_send(String checkletter, int indexofstring) {
     spaceF();
     stop_bit();
   }
-  else if (checkletter[indexofstring] == 'D') {   //10010 WRU? will program later
+  else if (checkletter[indexofstring] == 'D' || checkletter[indexofstring] == '$') {   //10010 WRU? will program later
     start_bit();
     markF();
     spaceF();
