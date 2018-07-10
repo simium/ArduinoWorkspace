@@ -16,10 +16,10 @@
 #include <Wire.h>
 #include <Adafruit_BMP085.h>
 
-HardwareSerial Serial1(2);
+//HardwareSerial Serial2(2);
 
 // what's the name of the hardware serial port?
-#define GPSSerial Serial1
+#define GPSSerial Serial2
 
 // Connect to the GPS on the hardware port
 Adafruit_GPS GPS(&GPSSerial);
@@ -32,18 +32,20 @@ Adafruit_GPS GPS(&GPSSerial);
 //#define radioPower 0x50 // -2 dBm
 //#define radioPower 0x52  // 0 dBm
 //#define radioPower 0x55  //  3 dBm
-#define radioPower 0x58  // 6 dBm
+//#define radioPower 0x58  // 6 dBm
 //#define radioPower 0x5B  //  9 dBm
 //#define radioPower 0x5E  // 12 dBm
-//#define radioPower 0x7F  // 17 dBm
+#define radioPower 0x7F  // 17 dBm
 #define ssPin 33  //  SS
 #define rstPin 27 //  reset pin
 #define myShift 3 // 3 x 61 Hz = 181 Hz ~ 170 Hz
 #define myDelay 5 // delay in seconds between loops
-#define myFrequency 433425000  //  70cm
+#define myFrequency 433557000  //  70cm
 //#define myFrequency 915000000  //  33cm
 
-char mytext[80];
+#define DELAY_TIME 60013
+
+char mytext[100];
 String myCallSign = "$LEONOV";
 String myString = "";
 int myStringLen = 0;
@@ -51,7 +53,7 @@ int current_state;
 int previous_state;
 int send_shift;
 float baud = 45.45;
-float bit_time = 1000 / baud;;
+float bit_time = 1000 / baud;
 float stop_bit_time = bit_time * 2;
 uint32_t myMark;
 uint32_t mySpace;
@@ -94,36 +96,16 @@ void loop () {
   char c = GPS.read();
   if (GPS.newNMEAreceived()) {
     if (!GPS.parse(GPS.lastNMEA()))
-      return;
+      //return;
+      int bad = 1;
   }
 
   if (timer > millis()) timer = millis();
 
   // approximately every 2 seconds or so, print out the current stats
-  if (millis() - timer > 13000) {
+  if (millis() - timer > DELAY_TIME) {
     tx_count++;
-    timer = millis(); // reset the timer
-    Serial.print("\nTime: ");
-    Serial.print(GPS.hour, DEC); Serial.print(':');
-    Serial.print(GPS.minute, DEC); Serial.print(':');
-    Serial.print(GPS.seconds, DEC); Serial.print('.');
-    Serial.println(GPS.milliseconds);
-    Serial.print("Date: ");
-    Serial.print(GPS.day, DEC); Serial.print('/');
-    Serial.print(GPS.month, DEC); Serial.print("/20");
-    Serial.println(GPS.year, DEC);
-    Serial.print("Fix: "); Serial.print((int)GPS.fix);
-    Serial.print(" quality: "); Serial.println((int)GPS.fixquality);
-    if (GPS.fix) {
-      Serial.print("Location: ");
-      Serial.print(GPS.latitude, 4); Serial.print(GPS.lat);
-      Serial.print(", ");
-      Serial.print(GPS.longitude, 4); Serial.println(GPS.lon);
-      Serial.print("Speed (knots): "); Serial.println(GPS.speed);
-      Serial.print("Angle: "); Serial.println(GPS.angle);
-      Serial.print("Altitude: "); Serial.println(GPS.altitude);
-      Serial.print("Satellites: "); Serial.println((int)GPS.satellites);
-    }
+    timer = millis();
 
     buildString();
     transmitData();
@@ -140,12 +122,12 @@ void txString(String dataString) {
 void buildString() {
   myString = myCallSign + ",";
   myString += String(tx_count) + ",";
-  myString += String(GPS.lat) + ",";
-  myString += String(GPS.lon) + ",";
+  myString += String(GPS.latitude/100) + ",";
+  myString += String(GPS.longitude/100) + ",";
   myString += String(GPS.altitude) + ",";
   myString += String(bmp.readAltitude()) + ",";
   myString += String(bmp.readPressure()) + ",";
-  myString += String(bmp.readTemperature()) + "*";
+  myString += String(bmp.readTemperature()) + "#\n";
   myString.toUpperCase();
   myStringLen = myString.length();
   Serial.print("TX: "); Serial.println(myString);
@@ -499,6 +481,24 @@ void lookup_send(String checkletter, int indexofstring) {
     spaceF();
     markF();
     spaceF();
+    spaceF();
+    stop_bit();
+  }
+  else if ( (checkletter[indexofstring] == '\r')) { // 01000
+    start_bit();
+    spaceF();
+    markF();
+    spaceF();
+    spaceF();
+    spaceF();
+    stop_bit();
+  }
+  else if ( (checkletter[indexofstring] == '\n')) { // 00010
+    start_bit();
+    spaceF();
+    spaceF();
+    spaceF();
+    markF();
     spaceF();
     stop_bit();
   }
