@@ -63,6 +63,7 @@ int myHour, myMinute, mySecond, myAlt, mySpd, mySat;
 double myLat, myLng;
 // For stats that happen every 5 seconds
 unsigned long last = 0UL;
+int8_t _power;
 
 Adafruit_BMP085 bmp;
 
@@ -110,6 +111,10 @@ void loop () {
     buildString();
     transmitData();
   }
+
+  //setTxPower(map((int)bmp.readAltitude(), 0, 34000, -2, 20), true);
+  setTxPower(20, true);
+  //Serial.println(map((int)bmp.readAltitude(), 0, 34000, -2, 20));
 }
 
 void txString(String dataString) {
@@ -122,8 +127,8 @@ void txString(String dataString) {
 void buildString() {
   myString = myCallSign + ",";
   myString += String(tx_count) + ",";
-  myString += String(GPS.latitude/100) + ",";
-  myString += String(GPS.longitude/100) + ",";
+  myString += String(GPS.latitude / 100.0) + ",";
+  myString += String(GPS.longitude / 100.0) + ",";
   myString += String(GPS.altitude) + ",";
   myString += String(bmp.readAltitude()) + ",";
   myString += String(bmp.readPressure()) + ",";
@@ -131,6 +136,56 @@ void buildString() {
   myString.toUpperCase();
   myStringLen = myString.length();
   Serial.print("TX: "); Serial.println(myString);
+}
+
+#define RH_RF69_REG_11_PALEVEL                              0x11
+#define RH_RF69_PALEVEL_PA0ON                               0x80
+#define RH_RF69_PALEVEL_PA1ON                               0x40
+#define RH_RF69_PALEVEL_PA2ON                               0x20
+#define RH_RF69_PALEVEL_OUTPUTPOWER                         0x1f
+
+void setTxPower(int8_t power, bool ishighpowermodule)
+{
+  _power = power;
+  uint8_t palevel;
+
+  if (ishighpowermodule)
+  {
+    if (_power < -2)
+      _power = -2; //RFM69HW only works down to -2.
+    if (_power <= 13)
+    {
+      // -2dBm to +13dBm
+      //Need PA1 exclusivelly on RFM69HW
+      palevel = RH_RF69_PALEVEL_PA1ON | ((_power + 18) &
+                                         RH_RF69_PALEVEL_OUTPUTPOWER);
+    }
+    else if (_power >= 18)
+    {
+      // +18dBm to +20dBm
+      // Need PA1+PA2
+      // Also need PA boost settings change when tx is turned on and off, see setModeTx()
+      palevel = RH_RF69_PALEVEL_PA1ON
+                | RH_RF69_PALEVEL_PA2ON
+                | ((_power + 11) & RH_RF69_PALEVEL_OUTPUTPOWER);
+    }
+    else
+    {
+      // +14dBm to +17dBm
+      // Need PA1+PA2
+      palevel = RH_RF69_PALEVEL_PA1ON
+                | RH_RF69_PALEVEL_PA2ON
+                | ((_power + 14) & RH_RF69_PALEVEL_OUTPUTPOWER);
+    }
+  }
+  else
+  {
+    if (_power < -18) _power = -18;
+    if (_power > 13) _power = 13; //limit for RFM69W
+    palevel = RH_RF69_PALEVEL_PA0ON
+              | ((_power + 18) & RH_RF69_PALEVEL_OUTPUTPOWER);
+  }
+  writeReg(RH_RF69_REG_11_PALEVEL, palevel);
 }
 
 void setupRFM69() {
@@ -141,7 +196,8 @@ void setupRFM69() {
   getSpace(myFrequency);
   writeReg(0x26, 0x07); //  CLK off to save power
   writeReg(0x01, 0x0C); // set to TX mode
-  writeReg(0x11, radioPower); // 0x9F PA0 On only, 0x5F or 0x41  //  Pa1On 0x40 to 0x5F ?????  Was 0x70
+  //writeReg(0x11, radioPower); // 0x9F PA0 On only, 0x5F or 0x41  //  Pa1On 0x40 to 0x5F ?????  Was 0x70
+  setTxPower(20, true);
 }
 
 void resetRFM69() {
